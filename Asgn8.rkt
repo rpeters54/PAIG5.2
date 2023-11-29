@@ -2,10 +2,65 @@
 
 (require typed/rackunit)
 
-; Authors: Riley Peters and Junseo Lee
-
 ; Full Project Implemented
 
+#|
+============================================================
+|#
+
+;; Values
+
+; output data type
+(define-type Value (U Real Boolean CloV PrimV String))
+
+; closures
+(struct CloV ([params : (Listof Symbol)]
+              [num-params : Natural]
+              [body : ExprC]
+              [env : Env]) #:transparent)
+
+; primitives
+(struct PrimV ([op : (-> (Listof Value) Real Value)])#:transparent)
+
+
+; real numbers
+(struct NumC ([n : Real]) #:transparent)
+
+;; Expressions
+
+; defines all types of expressions that the interpeter can evaluate
+(define-type ExprC (U NumC IdC LamC AppC IfC StrC))
+
+; bindings: names that can be substituted for other expressions
+(struct IdC ([s : Symbol])  #:transparent)
+
+; lambda expressions
+(struct LamC ([params : (Listof Symbol)]
+              [num-params : Natural]
+              [body : ExprC])  #:transparent)
+
+; function applications: names and arguments that can be passed into functions and evaluated
+(struct AppC ([fun : ExprC]
+              [arglist : (Listof ExprC)]
+              [num-args : Natural])  #:transparent)
+
+; if less than 0: basic if statement, checks if test expression is <= 0
+; if it is interpeter evaluates expression 'then,' otherwise it evaluates 'else'
+(struct IfC ([test : ExprC]
+             [then : ExprC]
+             [else : ExprC]) #:transparent)
+
+; expression type that handles strings
+(struct StrC ([str : String]) #:transparent)
+
+
+;; Environment
+
+; binds a symbol to a value
+(struct Binding ((name : Symbol) (val : Value)) #:transparent)
+
+; Environment is a list of bindings
+(define-type Env (Listof Binding))
 
 #|
 ============================================================
@@ -27,7 +82,7 @@
     [(LamC p n b) (CloV p n b env)]
     [(AppC f a n)
      (define fd (interp f env))
-     (define arg-values (map (λ ([arg : ExprC]) : Value (interp arg env)) a))
+     (define arg-values (for/list : (Listof Value) ([arg a]) (interp arg env store)))
      (match fd
        [(PrimV p) (p arg-values n)]
        [(CloV c-params c-n c-body c-env)
@@ -173,61 +228,6 @@
 ============================================================
 |#
 
-;; Data Types
-
-; output data type
-(define-type Value (U Real Boolean CloV PrimV String))
-
-; closures
-(struct CloV ([params : (Listof Symbol)]
-              [num-params : Natural]
-              [body : ExprC]
-              [env : Env]) #:transparent)
-
-;; uncomment when adding primitives
-(struct PrimV ([op : (-> (Listof Value) Real Value)])#:transparent)
-
-; Constructs
-
-; real numbers
-(struct NumC ([n : Real]) #:transparent)
-
-; defines all types of expressions that the interpeter can evaluate
-(define-type ExprC (U NumC IdC LamC AppC IfC StrC))
-
-; bindings: names that can be substituted for other expressions
-(struct IdC ([s : Symbol])  #:transparent)
-
-; lambda expressions
-(struct LamC ([params : (Listof Symbol)]
-              [num-params : Natural]
-              [body : ExprC])  #:transparent)
-
-; function applications: names and arguments that can be passed into functions and evaluated
-(struct AppC ([fun : ExprC]
-              [arglist : (Listof ExprC)]
-              [num-args : Natural])  #:transparent)
-
-; if less than 0: basic if statement, checks if test expression is <= 0
-; if it is interpeter evaluates expression 'then,' otherwise it evaluates 'else'
-(struct IfC ([test : ExprC]
-             [then : ExprC]
-             [else : ExprC]) #:transparent)
-
-; expression type that handles strings
-(struct StrC ([str : String]) #:transparent)
-
-#|
-============================================================
-|#
-
-;; Environment Definitions
-
-; binds a symbol to a value
-(struct Binding ((name : Symbol) (val : Value)) #:transparent)
-
-; Environment is a list of bindings
-(define-type Env (Listof Binding))
 
 ; macro defining an empty environment
 (define top-env (list
