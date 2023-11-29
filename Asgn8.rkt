@@ -82,7 +82,7 @@
     [(LamC p n b) (CloV p n b env)]
     [(AppC f a n)
      (define fd (interp f env))
-     (define arg-values (for/list : (Listof Value) ([arg a]) (interp arg env store)))
+     (define arg-values (for/list : (Listof Value) ([arg a]) (interp arg env)))
      (match fd
        [(PrimV p) (p arg-values n)]
        [(CloV c-params c-n c-body c-env)
