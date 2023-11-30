@@ -227,27 +227,47 @@
      (define ret (type-check b (extend-type-env p t env)))
      (FuncT t ret)]
     [(RecC p t n rb id rt b)
-     (define new-env (extend-type-env (list id) (list (FuncT t rt)) env))
+     (define new-env (cons (Type-Map id (FuncT t rt)) env))
+     (define rb-rt (type-check rb (extend-type-env p t new-env)))
      (cond
-       [(not (equal? rt (type-check rb (extend-type-env p t new-env))))
-        (error "s")]
+       [(not (equal? rt rb-rt))
+        (paig-error
+         'TypeError
+         'type-check
+         (format "Recursive Function Specified Return Type (~e) does Not Equal the Actual Return Type of its Body (~e)" rt rb-rt))]
        [else (type-check b new-env)])]
     [(IfC test then else)
      (define test-type (type-check test env))
      (define then-type (type-check then env))
      (define else-type (type-check else env))
      (cond
-       [(not (BoolT? test-type)) (error "s2")]
-       [(not (equal? then-type else-type)) (error "s3")]
+       [(not (BoolT? test-type))
+        (paig-error
+         'TypeError
+         'type-check
+         (format "If Statement Condition is ~e not a Bool" test-type))]
+       [(not (equal? then-type else-type))
+        (paig-error
+         'TypeError
+         'type-check
+         (format "Types of If Statement Products are Not Equal: (~e, ~e)" then-type else-type))]
        [else then-type])]
     [(AppC f a n)
      (define f-type (type-check f env))
      (define a-type (for/list : (Listof Type) ([arg a]) (type-check arg env)))
      (cond
-       [(not (FuncT? f-type)) (error "s4")]
-       [(not (equal? (length (FuncT-args f-type)) n)) (error "s5")]
+       [(not (FuncT? f-type))
+        (paig-error
+         'TypeError
+         'type-check
+         (format "Can Not Apply Arguments to Non-Function Type: ~e" f-type))]
+       [(not (equal? (length (FuncT-args f-type)) n))
+        (error "s5")]
        [(not (andmap equal? (FuncT-args f-type) a-type))
-        (error 'bad "s6 ~e, ~e" (FuncT-args f-type) a-type)]
+        (paig-error
+         'TypeError
+         'type-check
+         (format "Function Input Types and Argument Types are Not Equal: (~e, ~e)" (FuncT-args f-type) a-type))]
        [else (FuncT-ret f-type)])]))
 
 
@@ -758,10 +778,20 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 
 
 
+;; Recursive Form Testing
+
 (top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
                {fact 6}})
 
+(top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 0 else: {+ n {add {- n 1}}}}} as add returning num] :
+               {add 6}})
 
-
+(top-interp '{rec [{blam ([s : str] [key : str] [l : num] [key-len : num])
+                         {{<= l {- key-len 1}} ?
+                          false else:
+                          {{str-eq? {substring s 0 key-len} key} ?
+                           true else:
+                           {search {substring s 1 l} key {- l 1} key-len}}}} as search returning bool] :
+               {search "abcdefg" "ad" 7 2}})
 
 
