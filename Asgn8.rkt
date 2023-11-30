@@ -288,7 +288,6 @@
   (cond
     [(not (andmap real? val))
      (paig-error 'TypeError 'prim-sub (format "Input Must be Only Real Numbers, ~e" val))]
-    [(= 1 arity) (- 0 (list-ref val 0))]
     [(= 2 arity) (- (list-ref val 0) (list-ref val 1))]
     [(paig-error 'ArityError 'prim-sub (format "Expected List of Two Values, got ~e" val))]))
 
@@ -459,7 +458,6 @@ length ~e, given ~e" (string-length str) end))]
 ; validate all primitive operations
 (check-equal? (prim-add  (list 3 4)  2) 7)
 (check-equal? (prim-sub  (list 5 3)  2) 2)
-(check-equal? (prim-sub  (list 3)  1) -3)
 (check-equal? (prim-mult (list 2 10) 2) 20)
 (check-equal? (prim-div  (list 15 3) 2) 5)
 (check-equal? (prim-lte  (list -5 -1) 2) #t)
@@ -606,18 +604,18 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 
 ; make sure programs evaluate properly
 (check-equal? (debug-exp '{* 10 {+ -3.125 17}}) 138.75)
-(check-equal? (debug-exp '{- {- {- {- {- 0}}}}}) 0)
+(check-equal? (debug-exp '{- 0 {- 0 {- 0 {- 0 {- 0 0}}}}}) 0)
 (check-equal? (debug-exp '{+ {+ 1 2} {- 1 2}}) 2)
 (check-equal? (debug-exp '{* 2.5 {+ 2 2}}) 10.0)
 (check-equal? (debug-exp '{* 3 {- 3 4}}) -3)
-(check-equal? (debug-exp '{-{+ 3 4}}) -7)
-(check-equal? (debug-exp '{-{* 3 4}}) -12)
-(check-equal? (debug-exp '{-{- 3 4}}) 1)
-(check-equal? (debug-exp '{- 4}) -4)
-(check-equal? (debug-exp '{-{- -12.5}}) -12.5)
+(check-equal? (debug-exp '{- 0 {+ 3 4}}) -7)
+(check-equal? (debug-exp '{- 0 {* 3 4}}) -12)
+(check-equal? (debug-exp '{- 0 {- 3 4}}) 1)
+(check-equal? (debug-exp '{- 0 4}) -4)
+(check-equal? (debug-exp '{- 0 {- 0  -12.5}}) -12.5)
 (check-equal? (debug-exp '{/ 5 1}) 5)
 (check-equal? (debug-exp '{* {+ {* -1.5 3} {+ {* 7 8} 2}} 3}) 160.5)
-(check-equal? (debug-exp '{-{* {+ {* -1.5 3} {+ {* 7 8} 2}} 3}}) -160.5)
+(check-equal? (debug-exp '{- 0 {* {+ {* -1.5 3} {+ {* 7 8} 2}} 3}}) -160.5)
 (check-equal? (debug-exp '{(<= 4 0) ? {+ 2 3} else: {+ 4 5}}) 9)
 (check-equal? (debug-exp '{(<= -2.5 0) ? {* -1 2} else: 9}) -2)
 (check-equal? (debug-exp '{(<= 0 0) ? 22.9 else: {* 18273 -123.123}}) 22.9)
