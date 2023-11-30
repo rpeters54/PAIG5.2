@@ -58,7 +58,7 @@
 ;; Environment
 
 ; binds a symbol to a value
-(struct Binding ((name : Symbol) (val : Value)) #:transparent)
+(struct Binding ((name : Symbol) (val : (Boxof Value))) #:transparent)
 
 ; Environment is a list of bindings
 (define-type Env (Listof Binding))
@@ -90,7 +90,9 @@
 ; top-level function, runs a PAIG program given a list 
 ; of function s-expressions
 (define (top-interp [s : Sexp]) : String
-  (serialize (interp (parse s) top-env)))
+  (define ast (parse s))
+  (type-check ast top-type-env)
+  (serialize (interp ast top-env)))
 
 ; evaluates an AST substituting in functions as needed
 (define (interp [e : ExprC] [env : Env]) : Value
@@ -107,14 +109,12 @@
        [(CloV c-params c-n c-body c-env)
         (cond
           [(= n c-n)
-           (interp c-body
-                  (extend-env arg-values c-params c-env))]
+           (interp c-body (extend-env arg-values c-params c-env))]
           [else (paig-error 'ArityError 'interp (format "Incorrect Number of Funtion Arguments: ~e" e))])]
        [other (paig-error 'TypeError 'interp (format "Non-Function ~e Passed In Function Application: ~e" fd e))])]
     [(IfC test then else)
      (match (interp test env)
-       [(? boolean? b)
-        (if b (interp then env) (interp else env))]
+       [(? boolean? b) (if b (interp then env) (interp else env))]
        [other (paig-error 'TypeError 'interp (format "Non-Boolean Used as Condition in If Statement: ~e" e))])]))
 
 
@@ -161,17 +161,21 @@
      (define typelist (map parse-type (cast ty (Listof Sexp))))
      (cond
        [(ormap reserved idlist)
-        (paig-error 'IOError 'parse (format "Reserved Symbol ~e In With Statement: ~e"
-                                            (bad-symbol idlist) exp))]
+        (paig-error 'IOError 'parse
+                    (format "Reserved Symbol ~e In With Statement: ~e"
+                            (bad-symbol idlist) exp))]
        [(has-duplicate idlist)
         ((paig-error 'ArityError 'parse (format "With Statement Contains Duplicate Symbols: ~e" exp)))]
        [else (AppC (LamC idlist typelist (length idlist) (parse body))
                    (map parse exprlist)
-                   (length exprlist))])]     
+                   (length exprlist))])]
+    [(list 'rec (list 'blam (list (list (? symbol? id) ': ty)... body) 'as rec-id 'returning rec-ty) ': rec-body)
+     (define idlist (cast id (Listof Symbol)))
+     (define exprlist (cast expr (Listof Sexp)))
+     (define typelist (map parse-type (cast ty (Listof Sexp))))]
+    
     [(list exp explist ...)
-     (AppC (parse exp)
-           (map parse explist)
-           (length explist))]
+     (AppC (parse exp) (map parse explist) (length explist))]
     [other (error 'PAIG "parse, Malformed Expression: ~e" other)]))
 
 
@@ -214,7 +218,7 @@
      (define a-type (for/list : (Listof Type) ([arg a]) (type-check arg env)))
      (cond
        [(not (FuncT? f-type)) (error "s4")]
-       ;[(not (equal? (length (FuncT-args f-type)) n)) (error "s5")]
+       [(not (equal? (length (FuncT-args f-type)) n)) (error "s5")]
        [(not (andmap equal? (FuncT-args f-type) a-type))
         (error 'bad "s6 ~e, ~e" (FuncT-args f-type) a-type)]
        [else (FuncT-ret f-type)])]))
@@ -230,10 +234,7 @@
                     [else (type-lookup for r)])]))
 
 (define (extend-type-env [ids : (Listof Symbol)] [types : (Listof Type)] [env : Type-Env]) : Type-Env
-  (define new-env env)
-  (for/list : (Listof Void) ([id ids] [ty types])
-    (set! new-env (cons (Type-Map id ty) new-env)))
-  new-env)
+  (append (map Type-Map ids types) env))
     
 
 
@@ -337,16 +338,16 @@ length ~e, given ~e" (string-length str) end))]
 
 ; macro defining an empty environment
 (define top-env (list
-                (Binding 'true #t)
-                (Binding 'false #f)
-                (Binding '+ (PrimV prim-add))
-                (Binding '- (PrimV prim-sub))
-                (Binding '* (PrimV prim-mult))
-                (Binding '/ (PrimV prim-div))
-                (Binding '<= (PrimV prim-lte))
-                (Binding 'num-eq? (PrimV prim-num-eq))
-                (Binding 'str-eq? (PrimV prim-str-eq))
-                (Binding 'substring (PrimV substr))))
+                (Binding 'true (box #t))
+                (Binding 'false (box #f))
+                (Binding '+ (box (PrimV prim-add)))
+                (Binding '- (box (PrimV prim-sub)))
+                (Binding '* (box (PrimV prim-mult)))
+                (Binding '/ (box (PrimV prim-div)))
+                (Binding '<= (box (PrimV prim-lte)))
+                (Binding 'num-eq? (box (PrimV prim-num-eq)))
+                (Binding 'str-eq? (box (PrimV prim-str-eq)))
+                (Binding 'substring (box (PrimV substr)))))
 
 (define top-type-env (list
                       (Type-Map 'true (BoolT))
@@ -412,14 +413,12 @@ length ~e, given ~e" (string-length str) end))]
     (match env
       ['() (paig-error 'IOError 'lookup (format "name not found: ~e" for))]
       [(cons (Binding name val) r) (cond
-                    [(symbol=? for name) val]
+                    [(symbol=? for name) (unbox val)]
                     [else (lookup for r)])]))
 
 ; extends the current environment to include bindings defined by names and args
 (define (extend-env [args : (Listof Value)] [names : (Listof Symbol)] [env : Env]) : Env
-  (append
-   (map Binding names args)
-   env))
+  (append (for/list : (Listof Binding) ([arg args] [name names]) (Binding name (box arg))) env))
 
 
 #|
@@ -617,7 +616,7 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 (check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In interp: "
                                  "Incorrect Number of Funtion Arguments: (AppC (IdC 'f) (list (NumC 3)) 1)"))
            (λ () (interp (parse '{f 3})
-                         (append top-env (list (Binding 'f (CloV (list 'a 'b) 2 (NumC -69) top-env)))))))
+                         (append top-env (list (Binding 'f (box (CloV (list 'a 'b) 2 (NumC -69) top-env))))))))
 
 
 ;; IdC Substitution
@@ -625,9 +624,9 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 ; tests environment substitution
 (check-equal? (interp (parse 'true) top-env) #t)
 (check-equal? (interp (parse 'false) top-env) #f)
-(check-equal? (CloV? (interp (IdC 'thing) (append top-env (list (Binding 'thing (CloV (list 'a) 1 (NumC 1) '()))))))
+(check-equal? (CloV? (interp (IdC 'thing) (append top-env (list (Binding 'thing (box (CloV (list 'a) 1 (NumC 1) '())))))))
               #t)
-(check-equal? (PrimV? (interp (IdC 'thing) (append top-env (list (Binding 'thing (PrimV prim-add))))))
+(check-equal? (PrimV? (interp (IdC 'thing) (append top-env (list (Binding 'thing (box (PrimV prim-add)))))))
               #t)
 
 
@@ -644,7 +643,7 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
           (append top-env
                   (list
                    (Binding 'mult
-                            (CloV (list 'a 'x) 2 (AppC (IdC '*) (list (IdC 'a) (IdC 'x)) 2) top-env))))))
+                            (box (CloV (list 'a 'x) 2 (AppC (IdC '*) (list (IdC 'a) (IdC 'x)) 2) top-env)))))))
  "12")
 
 
