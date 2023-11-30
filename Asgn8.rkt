@@ -22,14 +22,16 @@
 ; primitives
 (struct PrimV ([op : (-> (Listof Value) Real Value)])#:transparent)
 
+;; Expressions
+
+; defines all types of expressions that the interpeter can evaluate
+(define-type ExprC (U NumC StrC IdC LamC RecC AppC IfC))
 
 ; real numbers
 (struct NumC ([n : Real]) #:transparent)
 
-;; Expressions
-
-; defines all types of expressions that the interpeter can evaluate
-(define-type ExprC (U NumC IdC LamC AppC IfC StrC))
+; expression type that handles strings
+(struct StrC ([str : String]) #:transparent)
 
 ; bindings: names that can be substituted for other expressions
 (struct IdC ([s : Symbol])  #:transparent)
@@ -39,6 +41,14 @@
               [types : (Listof Type)]
               [num-params : Natural]
               [body : ExprC])  #:transparent)
+
+(struct RecC ([params : (Listof Symbol)]
+              [types : (Listof Type)]
+              [num-params : Natural]
+              [rec-body : ExprC]
+              [name : Symbol]
+              [ret-type : Type]
+              [body : ExprC]) #:transparent)
 
 ; function applications: names and arguments that can be passed into functions and evaluated
 (struct AppC ([fun : ExprC]
@@ -50,9 +60,6 @@
 (struct IfC ([test : ExprC]
              [then : ExprC]
              [else : ExprC]) #:transparent)
-
-; expression type that handles strings
-(struct StrC ([str : String]) #:transparent)
 
 
 ;; Environment
@@ -99,8 +106,13 @@
   (match e
     [(NumC n) n]
     [(StrC s) s]
-    [(IdC n) (lookup n env)]
+    [(IdC n) (unbox (lookup n env))]
     [(LamC p t n b) (CloV p n b env)]
+    [(RecC p t n rb id rt b)
+     (define new-env (cons (Binding id (box "dummy")) env))
+     (define recursive (CloV p n rb new-env))
+     (set-box! (Binding-val (first new-env)) recursive)
+     (interp b new-env)]
     [(AppC f a n)
      (define fd (interp f env))
      (define arg-values (for/list : (Listof Value) ([arg a]) (interp arg env)))
@@ -143,7 +155,6 @@
          (IdC id))]
     [(list s1 '? s2 'else: s3)
      (IfC (parse s1) (parse s2) (parse s3))]
-
     [(list 'blam (list (list (? symbol? p) ': ty)...) body)
      (define params(cast p (Listof Symbol)))
      (define types (map parse-type (cast ty (Listof Sexp))))
@@ -154,7 +165,6 @@
        [(has-duplicate params)
         ((paig-error 'ArityError 'parse (format "Function Defintion Contains Duplicate Symbols: ~e" exp)))]
        [else (LamC params types (length params) (parse body))])]
-
     [(list 'with (list expr 'as (list (? symbol? id) ': ty))... ': body)
      (define idlist (cast id (Listof Symbol)))
      (define exprlist (cast expr (Listof Sexp)))
@@ -169,11 +179,16 @@
        [else (AppC (LamC idlist typelist (length idlist) (parse body))
                    (map parse exprlist)
                    (length exprlist))])]
-    [(list 'rec (list 'blam (list (list (? symbol? id) ': ty)... body) 'as rec-id 'returning rec-ty) ': rec-body)
+    [(list 'rec (list (list 'blam (list (list (? symbol? id) ': ty)...) rec-body) 'as (? symbol? name) 'returning ret-type) ': body)
      (define idlist (cast id (Listof Symbol)))
-     (define exprlist (cast expr (Listof Sexp)))
-     (define typelist (map parse-type (cast ty (Listof Sexp))))]
-    
+     (define typelist (map parse-type (cast ty (Listof Sexp))))
+     (cond
+       [(ormap reserved idlist)
+        (paig-error 'IOError 'parse (format "Reserved Symbol ~e In Rec Statement: ~e"
+                                            (bad-symbol idlist) exp))]
+       [(has-duplicate idlist)
+        ((paig-error 'ArityError 'parse (format "Rec Statement Contains Duplicate Symbols: ~e" exp)))]
+       [else (RecC idlist typelist (length idlist) (parse rec-body) name (parse-type ret-type) (parse body))])]
     [(list exp explist ...)
      (AppC (parse exp) (map parse explist) (length explist))]
     [other (error 'PAIG "parse, Malformed Expression: ~e" other)]))
@@ -185,6 +200,8 @@
 
 ;; Type Checker
 
+; parses a sexp that refers to a type and returns the proper type
+; throws an error for sexp that do not evaulate to a type
 (define (parse-type [s : Sexp]) : Type
   (match s
     ['num (NumT)]
@@ -197,6 +214,10 @@
       (parse-type s2))]
     [other (paig-error 'SyntaxError 'parse-type (format "Gave a non-existent type: ~e" s))]))
 
+
+; type checks an expression
+; returns the type the expression evaluates to,
+; or errors out if no such value exists
 (define (type-check [exp : ExprC] [env : Type-Env]) : Type
   (match exp
     [(NumC n) (NumT)]
@@ -205,6 +226,12 @@
     [(LamC p t n b)
      (define ret (type-check b (extend-type-env p t env)))
      (FuncT t ret)]
+    [(RecC p t n rb id rt b)
+     (define new-env (extend-type-env (list id) (list (FuncT t rt)) env))
+     (cond
+       [(not (equal? rt (type-check rb (extend-type-env p t new-env))))
+        (error "s")]
+       [else (type-check b new-env)])]
     [(IfC test then else)
      (define test-type (type-check test env))
      (define then-type (type-check then env))
@@ -233,6 +260,8 @@
                     [(symbol=? for id) type]
                     [else (type-lookup for r)])]))
 
+
+; extends current type environment with new type mappings
 (define (extend-type-env [ids : (Listof Symbol)] [types : (Listof Type)] [env : Type-Env]) : Type-Env
   (append (map Type-Map ids types) env))
     
@@ -380,7 +409,7 @@ length ~e, given ~e" (string-length str) end))]
 ; verifies if a symbol is a reserved keyword
 (define (reserved [s : Symbol]) : Boolean
   (match s
-    [(or 'with 'as '? 'else: 'blam ':) #t]
+    [(or 'rec '-> 'with 'as '? 'else: 'blam ':) #t]
     [other #f]))
 
 
@@ -409,11 +438,11 @@ length ~e, given ~e" (string-length str) end))]
 
 ; searches for bound variable values in an environment
 ; returns the value if it exists
-(define (lookup [for : Symbol] [env : Env]) : Value
+(define (lookup [for : Symbol] [env : Env]) : (Boxof Value)
     (match env
       ['() (paig-error 'IOError 'lookup (format "name not found: ~e" for))]
       [(cons (Binding name val) r) (cond
-                    [(symbol=? for name) (unbox val)]
+                    [(symbol=? for name) val]
                     [else (lookup for r)])]))
 
 ; extends the current environment to include bindings defined by names and args
@@ -728,6 +757,11 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
             (regexp-quote "PAIG: \n(IOError) In bad-symbol: "
                           "Reserved Symbol Used But Not Present in Symbol List"))
            (λ () (bad-symbol '(a b c d e f))))
+
+
+
+(top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
+               {fact 6}})
 
 
 
