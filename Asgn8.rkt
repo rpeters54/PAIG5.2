@@ -179,7 +179,8 @@
        [else (AppC (LamC idlist typelist (length idlist) (parse body))
                    (map parse exprlist)
                    (length exprlist))])]
-    [(list 'rec (list (list 'blam (list (list (? symbol? id) ': ty)...) rec-body) 'as (? symbol? name) 'returning ret-type) ': body)
+    [(list 'rec (list (list 'blam (list (list (? symbol? id) ': ty)...) rec-body)
+                      'as (? symbol? name) 'returning ret-type) ': body)
      (define idlist (cast id (Listof Symbol)))
      (define typelist (map parse-type (cast ty (Listof Sexp))))
      (cond
@@ -188,7 +189,8 @@
                                             (bad-symbol idlist) exp))]
        [(has-duplicate idlist)
         ((paig-error 'ArityError 'parse (format "Rec Statement Contains Duplicate Symbols: ~e" exp)))]
-       [else (RecC idlist typelist (length idlist) (parse rec-body) name (parse-type ret-type) (parse body))])]
+       [else (RecC idlist typelist (length idlist)
+                   (parse rec-body) name (parse-type ret-type) (parse body))])]
     [(list exp explist ...)
      (AppC (parse exp) (map parse explist) (length explist))]
     [other (error 'PAIG "parse, Malformed Expression: ~e" other)]))
@@ -234,7 +236,8 @@
         (paig-error
          'TypeError
          'type-check
-         (format "Recursive Function Specified Return Type (~e) does Not Equal the Actual Return Type of its Body (~e)" rt rb-rt))]
+         (format "Recursive Function Specified Return Type (~e) does Not Equal\
+ the Actual Return Type of its Body (~e)" rt rb-rt))]
        [else (type-check b new-env)])]
     [(IfC test then else)
      (define test-type (type-check test env))
@@ -262,7 +265,7 @@
          'type-check
          (format "Can Not Apply Arguments to Non-Function Type: ~e" f-type))]
        [(not (equal? (length (FuncT-args f-type)) n))
-        (error "s5")]
+        (paig-error 'ArityError 'type-check "Function Called With Incorrect Number of Arguments")]
        [(not (andmap equal? (FuncT-args f-type) a-type))
         (paig-error
          'TypeError
@@ -397,6 +400,7 @@ length ~e, given ~e" (string-length str) end))]
                 (Binding 'str-eq? (box (PrimV prim-str-eq)))
                 (Binding 'substring (box (PrimV substr)))))
 
+; type definitions for all primitives
 (define top-type-env (list
                       (Type-Map 'true (BoolT))
                       (Type-Map 'false (BoolT))
@@ -550,6 +554,16 @@ length ~e, given ~e" (string-length str) end))]
             (regexp-quote "PAIG: \n(TypeError) In prim-str-eq: Expected List of Two Strings, got '(1 \"s\")"))
            (λ () (prim-str-eq (list 1 "s") 2)))
 (check-exn (regexp
+            (regexp-quote "PAIG: \n(ArityError) In substring: \
+Expected List of Three Values, got '(\"\" 5 3 \"other\")"))
+           (λ () (substr (list "" 5 3 "other") 4)))
+(check-exn (regexp
+            (regexp-quote "PAIG: \n(TypeError) In substring: First Arg Must Be String, got #t"))
+           (λ () (substr (list #t 5 3) 3)))
+(check-exn (regexp
+            (regexp-quote "PAIG: \n(TypeError) In substring: Second Arg Must Be Natural, got #f"))
+           (λ () (substr (list "" #f 3) 3)))
+(check-exn (regexp
             (regexp-quote "PAIG: \n(TypeError) In substring: \
 Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
            (λ () (substr (list "" 5 (PrimV prim-add)) 3)))
@@ -570,10 +584,10 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 (check-equal? (parse '13) (NumC 13))
 (check-equal? (parse 'a) (IdC 'a))
 (check-equal? (parse '{+ 4 5}) (AppC (IdC '+) (list (NumC 4) (NumC 5)) 2))
-#;(check-equal?
+(check-equal?
  (parse
   '{blam ([a : num] [b : num] [c : num]) {+ a {- b c}}})
- (LamC '(a b c) (cast (list (NumT) (NumT) (NumT)) (Listof Type)) 3
+ (LamC '(a b c) (list (NumT) (NumT) (NumT)) 3
        (AppC (IdC '+) (list (IdC 'a)
                             (AppC (IdC '-) (list (IdC 'b) (IdC 'c)) 2)) 2)))
 (check-equal? (parse '{x ? y else: z}) (IfC (IdC 'x) (IdC 'y) (IdC 'z)))
@@ -607,6 +621,17 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
            (λ () (parse '{with [{+ 9 14} as [z : num]]
                                [98 as [z : num]] :
                                {z}})))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In parse: Rec Statement Contains Duplicate Symbols:\
+ '(rec ((blam ((n : num) (n : num)) ((<= n 0) ? 1 else: (* n (fact (- n 1))))) as fact returning num) : (fact 6))"))
+           (λ () (parse '{rec [{blam ([n : num][n : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
+                           {fact 6}})))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(IOError) In parse: Reserved Symbol 'as In Rec Statement:\
+ '(rec ((blam ((as : num)) ((<= n 0) ? 1 else: (* n (fact (- n 1))))) as fact returning num) : (fact 6))"))
+           (λ () (parse '{rec [{blam ([as : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
+                           {fact 6}})))
+
 ; if the paig gets an empty program, throws error
 (check-exn (regexp (regexp-quote "PAIG: parse, Malformed Expression: '()"))
            (λ () (parse '{})))
@@ -692,6 +717,8 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
                    (Binding 'mult
                             (box (CloV (list 'a 'x) 2 (AppC (IdC '*) (list (IdC 'a) (IdC 'x)) 2) top-env)))))))
  "12")
+(check-equal? (serialize (unbox (lookup '+ top-env))) "#<primop>")
+(check-equal? (serialize "s") "\"s\"")
 
 
 ;; Function Test Cases
@@ -716,15 +743,10 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 (define nine '{{blam ([nine : {-> num}]) {nine}}
                {blam () 9}})
 
-; recursively computes the int it was given
-#;(define dumb-count '{{blam (dumb) {dumb 10 dumb}}
-                     {blam (x y) {(<= x 0) ? 0 else: {+ 1 {y {- x 1} y}}}}})
-
 (check-equal? (top-interp cosine) "56.877604166666664")
 (check-equal? (top-interp add-function) "4")
 (check-equal? (top-interp many-params) "55")
 (check-equal? (top-interp nine) "9")
-#;(check-equal? (top-interp dumb-count) "10")
 
 
 ;; Desugaring Test Cases
@@ -749,12 +771,6 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
                                       {with [{blam ([a : num]) {- a 6}} as [f : {num -> num}]] :
                                             {f 6}}}}) 0)
 
-(type-check (parse '{with [{blam ([a : num]) {+ 1 a}} as [f : {num -> num}]] :
-                                {with [{blam ([a : num]) {* 5 a}} as [f : {num -> num}]] :
-                                      {with [{blam ([a : num]) {- a 6}} as [f : {num -> num}]] :
-                                            {f 6}}}})
-            top-type-env)
-
 ; shadowing primitives
 (check-equal? (debug-exp '{with [{blam ([a : num]) {+ 1 a}} as [+ : {num -> num}]] :
                                 {+ 5}}) 6)
@@ -777,21 +793,64 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
            (λ () (bad-symbol '(a b c d e f))))
 
 
+;; Type Checker Testing
+
+(check-equal?
+ (type-check
+  (parse '{with [{blam ([a : num]) {+ 1 a}} as [f : {num -> num}]] :
+                {with [{blam ([a : num]) {* 5 a}} as [f : {num -> num}]] :
+                      {with [{blam ([a : num]) {- a 6}} as [f : {num -> num}]] :
+                            {f 6}}}})
+  top-type-env) (NumT))
+
+
+(check-equal?
+ (type-check
+  (parse '{with [{blam ([n : num]) {{<= 10 n} ? "long" else: "short"}} as [f : {num -> str}]] :
+                            {f 6}})
+  top-type-env) (StrT))
+
+; Type Checker Exceptions
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Function Input Types and\
+ Argument Types are Not Equal: ((list (NumT) (NumT)), (list (NumT) (StrT)))"))
+           (λ () (type-check (parse '{+ 1 "s"}) top-type-env)))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In type-check: Function Called With Incorrect Number of Arguments"))
+           (λ () (type-check (parse '{+ 1 2 3}) top-type-env)))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Can Not Apply Arguments to Non-Function Type: (BoolT)"))
+           (λ () (type-check (parse '{true true}) top-type-env)))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: If Statement Condition is (StrT) not a Bool"))
+           (λ () (type-check (parse '{"s" ? true else: true}) top-type-env)))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Types of If Statement Products are Not Equal: ((StrT), (BoolT))"))
+           (λ () (type-check (parse '{true ? "s" else: true}) top-type-env)))
+
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Recursive Function Specified Return Type ((BoolT)) does Not Equal the Actual Return Type of its Body ((NumT))"))
+           (λ () (type-check (parse '{rec [{blam ([n : num]) {{flub 0} ? n else: n}} as flub returning bool] :
+                                       {fact 6}}) top-type-env)))
+; Type Parser Exception
+(check-exn (regexp (regexp-quote "PAIG: \n(SyntaxError) In parse-type: Gave a non-existent type: 'not-a-type"))
+           (λ () (parse-type 'not-a-type)))
+
+;Type Lookup Exception
+(check-exn (regexp (regexp-quote "PAIG: \n(IOError) In type-lookup: name not found: 'not-a-type"))
+           (λ () (type-lookup 'not-a-type top-type-env)))
 
 ;; Recursive Form Testing
 
-(top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
-               {fact 6}})
+(check-equal? (top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
+               {fact 6}}) "720")
 
-(top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 0 else: {+ n {add {- n 1}}}}} as add returning num] :
-               {add 6}})
+(check-equal? (top-interp '{rec [{blam ([n : num]) {{<= n 0} ? 0 else: {+ n {add {- n 1}}}}} as add returning num] :
+               {add 6}}) "21")
 
-(top-interp '{rec [{blam ([s : str] [key : str] [l : num] [key-len : num])
+(check-equal? (top-interp '{rec [{blam ([s : str] [key : str] [l : num] [key-len : num])
                          {{<= l {- key-len 1}} ?
                           false else:
                           {{str-eq? {substring s 0 key-len} key} ?
                            true else:
                            {search {substring s 1 l} key {- l 1} key-len}}}} as search returning bool] :
-               {search "abcdefg" "ad" 7 2}})
-
+               {search "abcdefg" "ad" 7 2}}) "false")
 
