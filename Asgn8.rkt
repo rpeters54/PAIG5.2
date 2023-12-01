@@ -624,7 +624,8 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In parse: Rec Statement Contains Duplicate Symbols:\
  '(rec ((blam ((n : num) (n : num)) ((<= n 0) ? 1 else: (* n (fact (- n 1))))) as fact returning num) : (fact 6))"))
-           (λ () (parse '{rec [{blam ([n : num][n : num]) {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
+           (λ () (parse '{rec [{blam ([n : num][n : num])
+                                     {{<= n 0} ? 1 else: {* n {fact {- n 1}}}}} as fact returning num] :
                            {fact 6}})))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(IOError) In parse: Reserved Symbol 'as In Rec Statement:\
@@ -696,7 +697,9 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 ; tests environment substitution
 (check-equal? (interp (parse 'true) top-env) #t)
 (check-equal? (interp (parse 'false) top-env) #f)
-(check-equal? (CloV? (interp (IdC 'thing) (append top-env (list (Binding 'thing (box (CloV (list 'a) 1 (NumC 1) '())))))))
+(check-equal? (CloV?
+               (interp (IdC 'thing)
+                       (append top-env (list (Binding 'thing (box (CloV (list 'a) 1 (NumC 1) '())))))))
               #t)
 (check-equal? (PrimV? (interp (IdC 'thing) (append top-env (list (Binding 'thing (box (PrimV prim-add)))))))
               #t)
@@ -729,15 +732,18 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 (define cosine '{{blam ([square : {num -> num}])
                       {{blam ([cos : {num -> num}]) 
                              {+ 56 {cos 0.5}}
-                            }{blam ([x : num]) {+ {- 1 {/ {square x} 2}} {/ {* {square x} {square x}} 24}}}}
+                            }{blam ([x : num]) {+ {- 1 {/ {square x} 2}}
+                                                  {/ {* {square x} {square x}} 24}}}}
                       }{blam ([a : num]) {* a a}}})
                      
 ; adds two number a and b
 (define add-function '{{blam ([add-function : {num num -> num}]) {add-function 1 3}}
                        {blam ([a : num] [b : num]) {+ a b}}}) 
 ; tests a bunch of parameters
-(define many-params '{{blam ([many-params : {num num num num num num num num num num -> num}]) {many-params 1 2 3 4 5 6 7 8 9 10}}
-                      {blam ([a : num] [b : num] [c : num] [d : num] [e : num] [f : num] [g : num] [h : num] [i : num] [j : num])
+(define many-params '{{blam ([many-params : {num num num num num num num num num num -> num}])
+                            {many-params 1 2 3 4 5 6 7 8 9 10}}
+                      {blam ([a : num] [b : num] [c : num] [d : num] [e : num]
+                                       [f : num] [g : num] [h : num] [i : num] [j : num])
                             {+ {+ {+ {+ {+ {+ {+ {+ {+ a b} c} d} e} f} g} h} i} j}}})
 ; returns nine
 (define nine '{{blam ([nine : {-> num}]) {nine}}
@@ -815,19 +821,23 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
  Argument Types are Not Equal: ((list (NumT) (NumT)), (list (NumT) (StrT)))"))
            (λ () (type-check (parse '{+ 1 "s"}) top-type-env)))
 
-(check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In type-check: Function Called With Incorrect Number of Arguments"))
+(check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In type-check: Function Called With\
+ Incorrect Number of Arguments"))
            (λ () (type-check (parse '{+ 1 2 3}) top-type-env)))
 
-(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Can Not Apply Arguments to Non-Function Type: (BoolT)"))
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Can Not Apply Arguments to\
+ Non-Function Type: (BoolT)"))
            (λ () (type-check (parse '{true true}) top-type-env)))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: If Statement Condition is (StrT) not a Bool"))
            (λ () (type-check (parse '{"s" ? true else: true}) top-type-env)))
 
-(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Types of If Statement Products are Not Equal: ((StrT), (BoolT))"))
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Types of If Statement Products\
+ are Not Equal: ((StrT), (BoolT))"))
            (λ () (type-check (parse '{true ? "s" else: true}) top-type-env)))
 
-(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Recursive Function Specified Return Type ((BoolT)) does Not Equal the Actual Return Type of its Body ((NumT))"))
+(check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Recursive Function Specified\
+ Return Type ((BoolT)) does Not Equal the Actual Return Type of its Body ((NumT))"))
            (λ () (type-check (parse '{rec [{blam ([n : num]) {{flub 0} ? n else: n}} as flub returning bool] :
                                        {fact 6}}) top-type-env)))
 ; Type Parser Exception
