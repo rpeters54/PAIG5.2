@@ -11,7 +11,7 @@
 ;; Values
 
 ; output data type
-(define-type Value (U Real Boolean CloV PrimV String))
+(define-type Value (U Real Boolean String CloV PrimV))
 
 ; closures
 (struct CloV ([params : (Listof Symbol)]
@@ -21,6 +21,7 @@
 
 ; primitives
 (struct PrimV ([op : (-> (Listof Value) Real Value)])#:transparent)
+
 
 ;; Expressions
 
@@ -42,6 +43,7 @@
               [num-params : Natural]
               [body : ExprC])  #:transparent)
 
+; recursive functions
 (struct RecC ([params : (Listof Symbol)]
               [types : (Listof Type)]
               [num-params : Natural]
@@ -70,6 +72,7 @@
 ; Environment is a list of bindings
 (define-type Env (Listof Binding))
 
+
 ;; Types
 
 (define-type Type (U NumT StrT BoolT FuncT))
@@ -79,6 +82,7 @@
 (struct BoolT()#:transparent)
 (struct FuncT([args : (Listof Type)]
              [ret : Type]) #:transparent)
+
 
 ;; Type Environment
 
@@ -98,7 +102,7 @@
 ; of function s-expressions
 (define (top-interp [s : Sexp]) : String
   (define ast (parse s))
-  (type-check ast top-type-env)
+  (type-check ast base-tenv)
   (serialize (interp ast top-env)))
 
 ; evaluates an AST substituting in functions as needed
@@ -165,7 +169,7 @@
        [(has-duplicate params)
         ((paig-error 'ArityError 'parse (format "Function Defintion Contains Duplicate Symbols: ~e" exp)))]
        [else (LamC params types (length params) (parse body))])]
-    [(list 'with (list expr 'as (list (? symbol? id) ': ty))... ': body)
+    [(list 'with (list expr 'as (? symbol? id) ': ty)... ': body)
      (define idlist (cast id (Listof Symbol)))
      (define exprlist (cast expr (Listof Sexp)))
      (define typelist (map parse-type (cast ty (Listof Sexp))))
@@ -209,10 +213,10 @@
     ['num (NumT)]
     ['str (StrT)]
     ['bool (BoolT)]
-    [(list (? symbol? s1) ... '-> s2)
-     (define args (cast s1 (Listof Symbol)))
+    [(list s1 ... '-> s2)
+     (define in-type (for/list : (Listof Type) ([t s1]) (parse-type (cast t Sexp))))
      (FuncT
-      (map parse-type args)
+      in-type
       (parse-type s2))]
     [other (paig-error 'SyntaxError 'parse-type (format "Gave a non-existent type: ~e" s))]))
 
@@ -265,30 +269,14 @@
          'type-check
          (format "Can Not Apply Arguments to Non-Function Type: ~e" f-type))]
        [(not (equal? (length (FuncT-args f-type)) n))
-        (paig-error 'ArityError 'type-check "Function Called With Incorrect Number of Arguments")]
+        (paig-error 'ArityError 'type-check (format "Function ~e, (type ~e)\
+ Called With Incorrect Number of Arguments: ~e" f f-type n))]
        [(not (andmap equal? (FuncT-args f-type) a-type))
         (paig-error
          'TypeError
          'type-check
          (format "Function Input Types and Argument Types are Not Equal: (~e, ~e)" (FuncT-args f-type) a-type))]
        [else (FuncT-ret f-type)])]))
-
-
-; searches for ids bound to types in the type-environment
-; returns the type if it is bound
-(define (type-lookup [for : Symbol] [env : Type-Env]) : Type
-    (match env
-      ['() (paig-error 'IOError 'type-lookup (format "name not found: ~e" for))]
-      [(cons (Type-Map id type) r) (cond
-                    [(symbol=? for id) type]
-                    [else (type-lookup for r)])]))
-
-
-; extends current type environment with new type mappings
-(define (extend-type-env [ids : (Listof Symbol)] [types : (Listof Type)] [env : Type-Env]) : Type-Env
-  (append (map Type-Map ids types) env))
-    
-
 
 #|
 ============================================================
@@ -401,7 +389,7 @@ length ~e, given ~e" (string-length str) end))]
                 (Binding 'substring (box (PrimV substr)))))
 
 ; type definitions for all primitives
-(define top-type-env (list
+(define base-tenv (list
                       (Type-Map 'true (BoolT))
                       (Type-Map 'false (BoolT))
                       (Type-Map '+ (FuncT (list (NumT) (NumT)) (NumT)))
@@ -450,8 +438,6 @@ length ~e, given ~e" (string-length str) end))]
     ['() (paig-error 'IOError 'bad-symbol "Reserved Symbol Used But Not Present in Symbol List")]
     [(cons f r) (if (reserved f) f (bad-symbol r))]))
 
-
-
 #|
 ============================================================
 |#
@@ -473,6 +459,26 @@ length ~e, given ~e" (string-length str) end))]
   (append (for/list : (Listof Binding) ([arg args] [name names]) (Binding name (box arg))) env))
 
 
+#|
+============================================================
+|#
+
+;; Type Checker Helper Functions
+
+; searches for ids bound to types in the type-environment
+; returns the type if it is bound
+(define (type-lookup [for : Symbol] [env : Type-Env]) : Type
+    (match env
+      ['() (paig-error 'IOError 'type-lookup (format "name not found: ~e" for))]
+      [(cons (Type-Map id type) r) (cond
+                    [(symbol=? for id) type]
+                    [else (type-lookup for r)])]))
+
+
+; extends current type environment with new type mappings
+(define (extend-type-env [ids : (Listof Symbol)] [types : (Listof Type)] [env : Type-Env]) : Type-Env
+  (append (map Type-Map ids types) env))
+    
 #|
 ============================================================
 |#
@@ -612,14 +618,14 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 ; cant bind a reserved symbol to a function name in a with statement
 (check-exn (regexp (regexp-quote "PAIG: \n(IOError) In parse: "
                                  "Reserved Symbol '? In With Statement: '(with ((+ 9 14) as ?) (98 as y) : (+ z y))"))
-           (λ () (parse '{with [{+ 9 14} as [? : num]]
-                               [98 as [y : num]] :
+           (λ () (parse '{with [{+ 9 14} as ? : num]
+                               [98 as y : num] :
                                {+ z y}})))
 ; cant provide duplicate parameters to a with statement
 (check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In parse: "
                                  "With Statement Contains Duplicate Symbols: '(with ((+ 9 14) as z) (98 as z) : (z))"))
-           (λ () (parse '{with [{+ 9 14} as [z : num]]
-                               [98 as [z : num]] :
+           (λ () (parse '{with [{+ 9 14} as z : num]
+                               [98 as z : num] :
                                {z}})))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In parse: Rec Statement Contains Duplicate Symbols:\
@@ -691,6 +697,9 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
            (λ () (interp (parse '{f 3})
                          (append top-env (list (Binding 'f (box (CloV (list 'a 'b) 2 (NumC -69) top-env))))))))
 
+#|
+============================================================
+|#
 
 ;; IdC Substitution
 
@@ -723,6 +732,9 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 (check-equal? (serialize (unbox (lookup '+ top-env))) "#<primop>")
 (check-equal? (serialize "s") "\"s\"")
 
+#|
+============================================================
+|#
 
 ;; Function Test Cases
 
@@ -754,31 +766,25 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
 (check-equal? (top-interp many-params) "55")
 (check-equal? (top-interp nine) "9")
 
+#|
+============================================================
+|#
 
 ;; Desugaring Test Cases
 
 ; Example with given by prof
-(check-equal? (debug-exp '{with [{+ 9 14} as [z : num]]
-                                [98 as [y : num]] :
+(check-equal? (debug-exp '{with [{+ 9 14} as z : num]
+                                [98 as y : num] :
                                 {+ z y}}) 121)
-; Lab 5 test code
-#;(check-equal?
- (debug-exp
-  '{with [{blam (f) {blam (a) {f a}}} as one]
-         [{blam (f) {blam (a) {f {f a}}}} as two]
-         [{blam (num1) {blam (num2) {blam (f) {blam (a) {{num1 f} {{num2 f} a}}}}}} as add]:
-         {with [{{add one} two} as three]
-               [{blam (a) {+ a a}} as double] :
-               {{three double} 2}}}) 16)
 
 ; shadowing other functions
-(check-equal? (debug-exp '{with [{blam ([a : num]) {+ 1 a}} as [f : {num -> num}]] :
-                                {with [{blam ([a : num]) {* 5 a}} as [f : {num -> num}]] :
-                                      {with [{blam ([a : num]) {- a 6}} as [f : {num -> num}]] :
+(check-equal? (debug-exp '{with [{blam ([a : num]) {+ 1 a}} as f : {num -> num}] :
+                                {with [{blam ([a : num]) {* 5 a}} as f : {num -> num}] :
+                                      {with [{blam ([a : num]) {- a 6}} as f : {num -> num}] :
                                             {f 6}}}}) 0)
 
 ; shadowing primitives
-(check-equal? (debug-exp '{with [{blam ([a : num]) {+ 1 a}} as [+ : {num -> num}]] :
+(check-equal? (debug-exp '{with [{blam ([a : num]) {+ 1 a}} as + : {num -> num}] :
                                 {+ 5}}) 6)
 
 
@@ -798,55 +804,70 @@ Third Arg Must Be Natural, got (PrimV #<procedure:prim-add>)"))
                           "Reserved Symbol Used But Not Present in Symbol List"))
            (λ () (bad-symbol '(a b c d e f))))
 
+#|
+============================================================
+|#
 
 ;; Type Checker Testing
 
 (check-equal?
  (type-check
-  (parse '{with [{blam ([a : num]) {+ 1 a}} as [f : {num -> num}]] :
-                {with [{blam ([a : num]) {* 5 a}} as [f : {num -> num}]] :
-                      {with [{blam ([a : num]) {- a 6}} as [f : {num -> num}]] :
+  (parse '{with [{blam ([a : num]) {+ 1 a}} as f : {num -> num}] :
+                {with [{blam ([a : num]) {* 5 a}} as f : {num -> num}] :
+                      {with [{blam ([a : num]) {- a 6}} as f : {num -> num}] :
                             {f 6}}}})
-  top-type-env) (NumT))
+  base-tenv) (NumT))
 
 
 (check-equal?
  (type-check
-  (parse '{with [{blam ([n : num]) {{<= 10 n} ? "long" else: "short"}} as [f : {num -> str}]] :
+  (parse '{with [{blam ([n : num]) {{<= 10 n} ? "long" else: "short"}} as f : {num -> str}] :
                             {f 6}})
-  top-type-env) (StrT))
+  base-tenv) (StrT))
+
+(check-equal? (type-check (parse '{with [{blam ([n : num]) {+ n 2}} as add2 : {num -> num}]
+                          [{blam ([n : num]) {* n 2}} as double : {num -> num}] :
+                          {double {add2 4}}}) base-tenv) (NumT))
+
+(check-equal? (type-check (parse '{with [{blam ([n : num]) {+ n 2}} as add2 : {num -> num}]
+                          [{blam ([n : num]) {blam ([a : num]) {* n a}}} as func : {num -> {num -> num}}] :
+                          {func {add2 4}}}) base-tenv) (FuncT (list (NumT)) (NumT)))
 
 ; Type Checker Exceptions
 (check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Function Input Types and\
  Argument Types are Not Equal: ((list (NumT) (NumT)), (list (NumT) (StrT)))"))
-           (λ () (type-check (parse '{+ 1 "s"}) top-type-env)))
+           (λ () (type-check (parse '{+ 1 "s"}) base-tenv)))
 
-(check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In type-check: Function Called With\
- Incorrect Number of Arguments"))
-           (λ () (type-check (parse '{+ 1 2 3}) top-type-env)))
+(check-exn (regexp (regexp-quote "PAIG: \n(ArityError) In type-check: Function (IdC '+),\
+ (type (FuncT (list (NumT) (NumT)) (NumT))) Called With Incorrect Number of Arguments: 3"))
+           (λ () (type-check (parse '{+ 1 2 3}) base-tenv)))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Can Not Apply Arguments to\
  Non-Function Type: (BoolT)"))
-           (λ () (type-check (parse '{true true}) top-type-env)))
+           (λ () (type-check (parse '{true true}) base-tenv)))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: If Statement Condition is (StrT) not a Bool"))
-           (λ () (type-check (parse '{"s" ? true else: true}) top-type-env)))
+           (λ () (type-check (parse '{"s" ? true else: true}) base-tenv)))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Types of If Statement Products\
  are Not Equal: ((StrT), (BoolT))"))
-           (λ () (type-check (parse '{true ? "s" else: true}) top-type-env)))
+           (λ () (type-check (parse '{true ? "s" else: true}) base-tenv)))
 
 (check-exn (regexp (regexp-quote "PAIG: \n(TypeError) In type-check: Recursive Function Specified\
  Return Type ((BoolT)) does Not Equal the Actual Return Type of its Body ((NumT))"))
            (λ () (type-check (parse '{rec [{blam ([n : num]) {{flub 0} ? n else: n}} as flub returning bool] :
-                                       {fact 6}}) top-type-env)))
+                                       {fact 6}}) base-tenv)))
 ; Type Parser Exception
 (check-exn (regexp (regexp-quote "PAIG: \n(SyntaxError) In parse-type: Gave a non-existent type: 'not-a-type"))
            (λ () (parse-type 'not-a-type)))
 
 ;Type Lookup Exception
 (check-exn (regexp (regexp-quote "PAIG: \n(IOError) In type-lookup: name not found: 'not-a-type"))
-           (λ () (type-lookup 'not-a-type top-type-env)))
+           (λ () (type-lookup 'not-a-type base-tenv)))
+
+#|
+============================================================
+|#
 
 ;; Recursive Form Testing
 
